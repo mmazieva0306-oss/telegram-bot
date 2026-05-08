@@ -8,13 +8,24 @@ from telegram.ext import (
 )
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+import io
 
 # ============================================================
 # НАСТРОЙКИ
 # ============================================================
 BOT_TOKEN = "8716526377:AAHkB-fUW7Mjnixr3JvJVl6tv-DOp70n1I0"
 ADMIN_CHAT_ID = "829964557"
-EXCEL_FILE = "/tmp/zayavki.xlsx"
+
+# Используем разные пути для разных окружений
+if os.path.exists('/app'):
+    # Render.com
+    EXCEL_FILE = "/app/zayavki.xlsx"
+elif os.path.exists('/tmp'):
+    # Временная директория
+    EXCEL_FILE = "/tmp/zayavki.xlsx"
+else:
+    # Локальная директория
+    EXCEL_FILE = "zayavki.xlsx"
 
 REGION, PRODUCT, PRICE, VOLUME, CONTACT, CONFIRM = range(6)
 
@@ -64,90 +75,125 @@ def _style_header(ws):
 
 def init_excel():
     """Создаёт файл Excel с листом 'Все заявки', если его нет"""
-    if os.path.exists(EXCEL_FILE):
-        return
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Все заявки"
-    _style_header(ws)
-    wb.save(EXCEL_FILE)
-    logger.info("Создан новый файл Excel")
+    try:
+        if os.path.exists(EXCEL_FILE):
+            # Проверяем, можно ли открыть существующий файл
+            try:
+                wb = openpyxl.load_workbook(EXCEL_FILE)
+                if "Все заявки" in wb.sheetnames:
+                    return
+            except:
+                # Если файл поврежден, создаем новый
+                os.remove(EXCEL_FILE)
+                
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Все заявки"
+        _style_header(ws)
+        wb.save(EXCEL_FILE)
+        logger.info(f"✅ Создан новый файл Excel: {EXCEL_FILE}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка создания Excel: {e}")
+        # Пытаемся создать в текущей директории
+        global EXCEL_FILE
+        EXCEL_FILE = "zayavki.xlsx"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Все заявки"
+        _style_header(ws)
+        wb.save(EXCEL_FILE)
+        logger.info(f"✅ Создан файл Excel в текущей директории: {EXCEL_FILE}")
 
 def save_to_excel(data: dict, user):
     """Сохраняет заявку в Excel (общий лист и лист региона)"""
     try:
+        # Убеждаемся, что файл существует
         init_excel()
+        
+        # Загружаем workbook
         wb = openpyxl.load_workbook(EXCEL_FILE)
+        
+        thin = Border(left=Side(style="thin"), right=Side(style="thin"),
+                      top=Side(style="thin"), bottom=Side(style="thin"))
+        font = Font(name="Arial", size=10)
+        center = Alignment(horizontal="center", vertical="center")
+        now = datetime.now()
+        
+        # ===== 1. Сохраняем в общий лист "Все заявки" =====
+        if "Все заявки" not in wb.sheetnames:
+            ws_all = wb.create_sheet("Все заявки")
+            _style_header(ws_all)
+        else:
+            ws_all = wb["Все заявки"]
+        
+        row_num = ws_all.max_row + 1
+        fill_all = PatternFill("solid", start_color="F1F8E9" if (row_num - 1) % 2 == 0 else "FFFFFF")
+        
+        # Данные для строки
+        row_data = [
+            row_num - 1,  # №
+            now.strftime("%d.%m.%Y %H:%M"),  # Дата
+            data.get("region", ""),  # Регион
+            data.get("product", ""),  # Продукт
+            data.get("price", ""),  # Цена
+            data.get("volume", ""),  # Объём
+            data.get("contact", ""),  # Контакт
+            f"@{user.username}" if user.username else "—",  # Telegram
+            str(user.id)  # ID
+        ]
+        
+        for col, val in enumerate(row_data, 1):
+            cell = ws_all.cell(row=row_num, column=col, value=val)
+            cell.font = font
+            cell.border = thin
+            cell.fill = fill_all
+            if col in (1, 2, 5, 6):
+                cell.alignment = center
+            else:
+                cell.alignment = Alignment(horizontal="left", vertical="center")
+        
+        # ===== 2. Сохраняем в лист региона =====
+        region_name = data.get("region", "Без региона")
+        safe_name = "".join(c for c in region_name if c not in r'\/:*?"<>|')[:31]
+        
+        if safe_name not in wb.sheetnames:
+            ws_region = wb.create_sheet(title=safe_name)
+            _style_header(ws_region)
+        else:
+            ws_region = wb[safe_name]
+        
+        row_num_region = ws_region.max_row + 1
+        fill_region = PatternFill("solid", start_color="F1F8E9" if (row_num_region - 1) % 2 == 0 else "FFFFFF")
+        
+        for col, val in enumerate(row_data, 1):
+            cell = ws_region.cell(row=row_num_region, column=col, value=val)
+            cell.font = font
+            cell.border = thin
+            cell.fill = fill_region
+            if col in (1, 2, 5, 6):
+                cell.alignment = center
+            else:
+                cell.alignment = Alignment(horizontal="left", vertical="center")
+        
+        # Сохраняем файл
+        wb.save(EXCEL_FILE)
+        logger.info(f"✅ Заявка сохранена в Excel: {EXCEL_FILE}")
+        logger.info(f"📊 Регион: {data.get('region')}, строка: {row_num - 1}")
+        
+        # Проверяем, что файл действительно создался
+        if os.path.exists(EXCEL_FILE):
+            file_size = os.path.getsize(EXCEL_FILE)
+            logger.info(f"📁 Размер файла: {file_size} байт")
+            return True
+        else:
+            logger.error("❌ Файл не найден после сохранения!")
+            return False
+            
     except Exception as e:
-        logger.error(f"Ошибка загрузки Excel: {e}")
+        logger.error(f"❌ Ошибка сохранения в Excel: {e}")
+        import traceback
+        traceback.print_exc()
         return False
-    
-    thin = Border(left=Side(style="thin"), right=Side(style="thin"),
-                  top=Side(style="thin"), bottom=Side(style="thin"))
-    font = Font(name="Arial", size=10)
-    center = Alignment(horizontal="center", vertical="center")
-    now = datetime.now()
-    
-    # ===== 1. Сохраняем в общий лист "Все заявки" =====
-    if "Все заявки" not in wb.sheetnames:
-        ws_all = wb.create_sheet("Все заявки")
-        _style_header(ws_all)
-    else:
-        ws_all = wb["Все заявки"]
-    
-    row_num = ws_all.max_row + 1
-    fill_all = PatternFill("solid", start_color="F1F8E9" if (row_num - 1) % 2 == 0 else "FFFFFF")
-    
-    # Данные для строки
-    row_data = [
-        row_num - 1,  # №
-        now.strftime("%d.%m.%Y %H:%M"),  # Дата
-        data.get("region", ""),  # Регион
-        data.get("product", ""),  # Продукт
-        data.get("price", ""),  # Цена
-        data.get("volume", ""),  # Объём
-        data.get("contact", ""),  # Контакт
-        f"@{user.username}" if user.username else "—",  # Telegram
-        str(user.id)  # ID
-    ]
-    
-    for col, val in enumerate(row_data, 1):
-        cell = ws_all.cell(row=row_num, column=col, value=val)
-        cell.font = font
-        cell.border = thin
-        cell.fill = fill_all
-        if col in (1, 2, 5, 6):  # Номер, дата, цена, объём - по центру
-            cell.alignment = center
-        else:
-            cell.alignment = Alignment(horizontal="left", vertical="center")
-    
-    # ===== 2. Сохраняем в лист региона =====
-    region_name = data.get("region", "Без региона")
-    safe_name = "".join(c for c in region_name if c not in r'\/:*?"<>|')[:31]
-    
-    if safe_name not in wb.sheetnames:
-        ws_region = wb.create_sheet(title=safe_name)
-        _style_header(ws_region)
-    else:
-        ws_region = wb[safe_name]
-    
-    row_num_region = ws_region.max_row + 1
-    fill_region = PatternFill("solid", start_color="F1F8E9" if (row_num_region - 1) % 2 == 0 else "FFFFFF")
-    
-    for col, val in enumerate(row_data, 1):
-        cell = ws_region.cell(row=row_num_region, column=col, value=val)
-        cell.font = font
-        cell.border = thin
-        cell.fill = fill_region
-        if col in (1, 2, 5, 6):
-            cell.alignment = center
-        else:
-            cell.alignment = Alignment(horizontal="left", vertical="center")
-    
-    # Сохраняем файл
-    wb.save(EXCEL_FILE)
-    logger.info(f"✅ Заявка сохранена в Excel — регион: {data.get('region')}, строка: {row_num - 1}")
-    return True
 
 # ============================================================
 # КОМАНДЫ
@@ -157,14 +203,22 @@ async def send_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != ADMIN_CHAT_ID:
         await update.message.reply_text("⛔ У вас нет прав.")
         return
+    
     if not os.path.exists(EXCEL_FILE):
         await update.message.reply_text("📭 Пока нет ни одной заявки.")
         return
-    await update.message.reply_document(
-        document=open(EXCEL_FILE, "rb"),
-        filename="zayavki.xlsx",
-        caption=f"📊 Все заявки — {datetime.now().strftime('%d.%m.%Y %H:%M')}",
-    )
+    
+    try:
+        with open(EXCEL_FILE, "rb") as f:
+            await update.message.reply_document(
+                document=f,
+                filename=f"zayavki_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                caption=f"📊 Все заявки — {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+            )
+        logger.info("✅ Excel файл отправлен админу")
+    except Exception as e:
+        logger.error(f"❌ Ошибка отправки Excel: {e}")
+        await update.message.reply_text("❌ Ошибка при отправке файла.")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Начало диалога - выбор региона"""
@@ -228,8 +282,8 @@ async def get_volume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["volume"] = update.message.text.strip()
     await update.message.reply_text(
         "━━━━━━━━━━━━━━━\n"
-        "📞 Отправьте ваши контактные данные:\n"
-        "Телефон, Telegram username или email",
+        "📞 *Шаг 5 из 5 — Контакт*\n"
+        "Укажите телефон или Telegram для связи:\n\nПример: +7 900 123-45-67",
         parse_mode="Markdown",
     )
     return CONTACT
@@ -311,6 +365,23 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     
     return ConversationHandler.END
 
+async def check_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Проверка статуса Excel файла (только для админа)"""
+    if str(update.effective_user.id) != ADMIN_CHAT_ID:
+        await update.message.reply_text("⛔ У вас нет прав.")
+        return
+    
+    if os.path.exists(EXCEL_FILE):
+        size = os.path.getsize(EXCEL_FILE)
+        await update.message.reply_text(
+            f"✅ Excel файл существует\n"
+            f"📁 Путь: {EXCEL_FILE}\n"
+            f"📊 Размер: {size} байт\n"
+            f"🕐 Создан: {datetime.fromtimestamp(os.path.getctime(EXCEL_FILE)).strftime('%d.%m.%Y %H:%M')}"
+        )
+    else:
+        await update.message.reply_text(f"❌ Excel файл не найден по пути: {EXCEL_FILE}")
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Отмена диалога"""
     await update.message.reply_text("❌ Отменено. /start", reply_markup=ReplyKeyboardRemove())
@@ -321,7 +392,11 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 # ============================================================
 def main():
     """Запуск бота"""
+    print("🚀 Запуск бота...")
+    print(f"📁 Путь к Excel: {EXCEL_FILE}")
+    
     init_excel()
+    
     app = Application.builder().token(BOT_TOKEN).build()
 
     # ConversationHandler для заявок
@@ -340,10 +415,13 @@ def main():
     
     app.add_handler(conv_handler)
     app.add_handler(CommandHandler("excel", send_excel))
+    app.add_handler(CommandHandler("check", check_file))  # Добавляем команду для проверки
 
     print("✅ Бот успешно запущен!")
     print(f"📁 Файл Excel: {EXCEL_FILE}")
-    app.run_polling(drop_pending_updates=True)
+    
+    # Запускаем с увеличенным таймаутом
+    app.run_polling(drop_pending_updates=True, timeout=60)
 
 if __name__ == "__main__":
     main()
