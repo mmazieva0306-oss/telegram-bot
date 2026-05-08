@@ -14,7 +14,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 # ============================================================
 BOT_TOKEN = "8716526377:AAHkB-fUW7Mjnixr3JvJVl6tv-DOp70n1I0"
 ADMIN_CHAT_ID = "829964557"
-EXCEL_FILE = "zayavki.xlsx"  # Используем локальный файл, не /tmp
+EXCEL_FILE = "zayavki.xlsx"
 
 REGION, PRODUCT, PRICE, VOLUME, CONTACT, CONFIRM = range(6)
 
@@ -22,7 +22,7 @@ logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=lo
 logger = logging.getLogger(__name__)
 
 # ============================================================
-# РЕГИОНЫ И ПРОДУКТЫ
+# РЕГИОНЫ
 # ============================================================
 REGIONS = [
     ["Алтайский край", "Архангельская область"],
@@ -32,6 +32,9 @@ REGIONS = [
     ["Республика Марий Эл", "✏️ Другой регион"],
 ]
 
+# ============================================================
+# ПРОДУКТЫ
+# ============================================================
 PRODUCTS = [
     ["🌲 Шишка сосновая", "🍓 Морошка"],
     ["🫐 Черника", "🍊 Облепиха"],
@@ -41,7 +44,7 @@ PRODUCTS = [
 ]
 
 # ============================================================
-# EXCEL ФУНКЦИИ
+# EXCEL
 # ============================================================
 HEADER_COLS = ["№", "Дата", "Регион", "Продукт", "Цена (руб/кг)", "Объём (кг)", "Контакт", "Telegram", "ID"]
 COL_WIDTHS = [5, 12, 22, 22, 16, 12, 24, 20, 14]
@@ -83,7 +86,6 @@ def save_to_excel(data: dict, user):
     center = Alignment(horizontal="center", vertical="center")
     now = datetime.now()
     
-    # Сохраняем в общий лист
     if "Все заявки" not in wb.sheetnames:
         ws_all = wb.create_sheet("Все заявки")
         _style_header(ws_all)
@@ -115,7 +117,6 @@ def save_to_excel(data: dict, user):
         else:
             cell.alignment = Alignment(horizontal="left", vertical="center")
     
-    # Сохраняем в лист региона
     region_name = data.get("region", "Без региона")
     safe_name = "".join(c for c in region_name if c not in r'\/:*?"<>|')[:31]
     
@@ -143,7 +144,7 @@ def save_to_excel(data: dict, user):
     return True
 
 # ============================================================
-# ОБРАБОТЧИКИ КОМАНД
+# ОБРАБОТЧИКИ
 # ============================================================
 async def send_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != ADMIN_CHAT_ID:
@@ -298,16 +299,14 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 # ============================================================
-# ЗАПУСК (POLLING - ПРОСТОЙ РЕЖИМ)
+# ЗАПУСК
 # ============================================================
 def main():
-    print("🚀 Запуск бота в режиме polling...")
+    print("🚀 Запуск бота...")
     init_excel()
     
-    # Создаем приложение
     app = Application.builder().token(BOT_TOKEN).build()
     
-    # Добавляем обработчики
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -324,9 +323,8 @@ def main():
     app.add_handler(conv_handler)
     app.add_handler(CommandHandler("excel", send_excel))
     
-    # Запускаем polling
     print("✅ Бот запущен! Жду команды...")
-    app.run_polling(allowed_updates=["message", "callback_query"])
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
