@@ -1,5 +1,6 @@
 import logging
 import os
+import asyncio
 from datetime import datetime
 from flask import Flask, request
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
@@ -321,21 +322,32 @@ async def webhook():
 def health_check():
     return 'Бот работает', 200
 
-def setup_webhook():
+async def setup_webhook():
+    """Асинхронная установка вебхука"""
     render_url = os.environ.get('RENDER_EXTERNAL_URL')
     if not render_url:
         logger.warning("RENDER_EXTERNAL_URL не найден")
         return False
     
     webhook_url = f"{render_url}/{BOT_TOKEN}"
-    telegram_app.bot.set_webhook(url=webhook_url, drop_pending_updates=True)
-    logger.info(f"✅ Вебхук установлен: {webhook_url}")
-    return True
+    
+    # Удаляем старый вебхук
+    await telegram_app.bot.delete_webhook(drop_pending_updates=True)
+    logger.info("✅ Старый вебхук удален")
+    
+    # Устанавливаем новый
+    result = await telegram_app.bot.set_webhook(url=webhook_url, drop_pending_updates=True)
+    if result:
+        logger.info(f"✅ Вебхук установлен: {webhook_url}")
+    else:
+        logger.error(f"❌ Ошибка установки вебхука")
+    return result
 
 # ============================================================
 # ЗАПУСК
 # ============================================================
-def main():
+async def run_bot():
+    """Асинхронный запуск бота"""
     global telegram_app
     
     print("🚀 Запуск бота...")
@@ -359,19 +371,31 @@ def main():
     telegram_app.add_handler(conv_handler)
     telegram_app.add_handler(CommandHandler("excel", send_excel))
     
-    if setup_webhook():
+    # Настраиваем вебхук
+    webhook_set = await setup_webhook()
+    
+    if webhook_set:
         port = int(os.environ.get('PORT', 8080))
-        logger.info(f"🚀 Запуск сервера на порту {port}")
-        # Запускаем Flask с Gunicorn (не используем app.run())
-        flask_app.run(host='0.0.0.0', port=port)
+        logger.info(f"🚀 Запуск Flask сервера на порту {port}")
+        
+        # Запускаем Flask в отдельном потоке
+        import threading
+        def run_flask():
+            flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+        
+        flask_thread = threading.Thread(target=run_flask)
+        flask_thread.start()
+        
+        # Держим бота активным
+        while True:
+            await asyncio.sleep(3600)  # Спим час
     else:
         logger.warning("Запуск в режиме polling")
-        telegram_app.run_polling()
+        await telegram_app.run_polling()
 
 # ============================================================
-# ТОЧКА ВХОДА ДЛЯ GUNICORN
+# ТОЧКА ВХОДА
 # ============================================================
 if __name__ == "__main__":
-    main()
-
-# Gunicorn будет использовать flask_app напрямую
+    # Запускаем асинхронную функцию
+    asyncio.run(run_bot())
