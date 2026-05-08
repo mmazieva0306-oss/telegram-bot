@@ -228,8 +228,8 @@ async def get_volume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["volume"] = update.message.text.strip()
     await update.message.reply_text(
         "━━━━━━━━━━━━━━━\n"
-        "📞 *Шаг 5 из 5 — Контакт*\n"
-        "Укажите телефон или Telegram для связи:\n\nПример: +7 900 123-45-67",
+        "📞 Отправьте ваши контактные данные:\n"
+        "Телефон, Telegram username или email",
         parse_mode="Markdown",
     )
     return CONTACT
