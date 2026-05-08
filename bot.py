@@ -14,7 +14,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 # ================= НАСТРОЙКИ (ПРОВЕРЬТЕ ТОКЕН И ID) =================
 BOT_TOKEN = "8716526377:AAHkB-fUW7Mjnixr3JvJVl6tv-DOp70n1I0"  # Токен @Bydikorosbot
 ADMIN_CHAT_ID = "829964557"  # ID Виталия
-EXCEL_FILE = "/home/mmazieva0306/заявки_дикоросы.xlsx"
+EXCEL_FILE = "/tmp/заявки_дикоросы.xlsx"
 
 REGION, PRODUCT, PRICE, VOLUME, CONTACT, CONFIRM = range(6)
 
