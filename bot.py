@@ -361,11 +361,17 @@ def main():
     
     if setup_webhook():
         port = int(os.environ.get('PORT', 8080))
-        logger.info(f"🚀 Запуск Flask сервера на порту {port}")
+        logger.info(f"🚀 Запуск сервера на порту {port}")
+        # Запускаем Flask с Gunicorn (не используем app.run())
         flask_app.run(host='0.0.0.0', port=port)
     else:
         logger.warning("Запуск в режиме polling")
         telegram_app.run_polling()
 
+# ============================================================
+# ТОЧКА ВХОДА ДЛЯ GUNICORN
+# ============================================================
 if __name__ == "__main__":
     main()
+
+# Gunicorn будет использовать flask_app напрямую
