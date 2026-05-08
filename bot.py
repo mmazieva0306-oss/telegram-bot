@@ -11,9 +11,9 @@ from telegram.ext import (
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
-# ================= НАСТРОЙКИ (ПРОВЕРЬТЕ ТОКЕН И ID) =================
-BOT_TOKEN = "8716526377:AAHkB-fUW7Mjnixr3JvJVl6tv-DOp70n1I0"  # Токен @Bydikorosbot
-ADMIN_CHAT_ID = "829964557"  # ID Виталия
+# ================= НАСТРОЙКИ =================
+BOT_TOKEN = "8716526377:AAHkB-fUW7Mjnixr3JvJVl6tv-DOp70n1I0"
+ADMIN_CHAT_ID = "829964557"
 EXCEL_FILE = "/tmp/заявки_дикоросы.xlsx"
 
 REGION, PRODUCT, PRICE, VOLUME, CONTACT, CONFIRM = range(6)
@@ -84,7 +84,8 @@ def save_to_excel(data: dict, user):
     font = Font(name="Arial", size=10)
     center = Alignment(horizontal="center", vertical="center")
     now = datetime.now()
-    num = wb["Все заявки"].max_row
+    ws = wb["Все заявки"]
+    num = ws.max_row
     fill = PatternFill("solid", start_color="F1F8E9" if num % 2 == 0 else "FFFFFF")
 
     row_data = [
@@ -98,7 +99,7 @@ def save_to_excel(data: dict, user):
         f"@{user.username}" if user.username else "—",
         str(user.id),
     ]
-    ws = wb["Все заявки"]
+
     for col, val in enumerate(row_data, 1):
         cell = ws.cell(row=num + 1, column=col, value=val)
         cell.font, cell.border, cell.fill = font, thin, fill
@@ -195,10 +196,11 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("❌ Отменено. /start", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
-# ================= ЗАПУСК =================
-def main():
-    init_excel()
+# ================= ЗАПУСК (ИСПРАВЛЕННЫЙ) =================
+async def run_bot():
+    """Асинхронный запуск бота для совместимости с Python 3.14"""
     app = Application.builder().token(BOT_TOKEN).build()
+
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -213,9 +215,9 @@ def main():
     )
     app.add_handler(conv)
     app.add_handler(CommandHandler("excel", send_excel))
+
     print("✅ Бот запущен и готов к опросам!")
-    app.run_polling()
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
- 
+    asyncio.run(run_bot())
