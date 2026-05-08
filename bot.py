@@ -62,15 +62,8 @@ def _style_header(ws):
     ws.row_dimensions[1].height = 22
     ws.freeze_panes = "A2"
 
-def get_or_create_sheet(wb, region_name):
-    safe = "".join(c for c in region_name if c not in r'\/:*?"<>|')[:31]
-    if safe in wb.sheetnames:
-        return wb[safe]
-    ws = wb.create_sheet(title=safe)
-    _style_header(ws)
-    return ws
-
 def init_excel():
+    """Создаёт файл Excel с листом 'Все заявки', если его нет"""
     if os.path.exists(EXCEL_FILE):
         return
     wb = openpyxl.Workbook()
@@ -78,13 +71,15 @@ def init_excel():
     ws.title = "Все заявки"
     _style_header(ws)
     wb.save(EXCEL_FILE)
+    logger.info("Создан новый файл Excel")
 
 def save_to_excel(data: dict, user):
+    """Сохраняет заявку в Excel (общий лист и лист региона)"""
     try:
         init_excel()
         wb = openpyxl.load_workbook(EXCEL_FILE)
     except Exception as e:
-        logger.error(f"Ошибка Excel: {e}")
+        logger.error(f"Ошибка загрузки Excel: {e}")
         return False
     
     thin = Border(left=Side(style="thin"), right=Side(style="thin"),
@@ -93,31 +88,72 @@ def save_to_excel(data: dict, user):
     center = Alignment(horizontal="center", vertical="center")
     now = datetime.now()
     
-    for sheet_name in ["Все заявки", data.get("region", "Без региона")]:
-        if sheet_name != "Все заявки":
-            ws = get_or_create_sheet(wb, sheet_name)
+    # ===== 1. Сохраняем в общий лист "Все заявки" =====
+    if "Все заявки" not in wb.sheetnames:
+        ws_all = wb.create_sheet("Все заявки")
+        _style_header(ws_all)
+    else:
+        ws_all = wb["Все заявки"]
+    
+    row_num = ws_all.max_row + 1
+    fill_all = PatternFill("solid", start_color="F1F8E9" if (row_num - 1) % 2 == 0 else "FFFFFF")
+    
+    # Данные для строки
+    row_data = [
+        row_num - 1,  # №
+        now.strftime("%d.%m.%Y %H:%M"),  # Дата
+        data.get("region", ""),  # Регион
+        data.get("product", ""),  # Продукт
+        data.get("price", ""),  # Цена
+        data.get("volume", ""),  # Объём
+        data.get("contact", ""),  # Контакт
+        f"@{user.username}" if user.username else "—",  # Telegram
+        str(user.id)  # ID
+    ]
+    
+    for col, val in enumerate(row_data, 1):
+        cell = ws_all.cell(row=row_num, column=col, value=val)
+        cell.font = font
+        cell.border = thin
+        cell.fill = fill_all
+        if col in (1, 2, 5, 6):  # Номер, дата, цена, объём - по центру
+            cell.alignment = center
         else:
-            ws = wb["Все заявки"]
-        num = ws.max_row
-        fill = PatternFill("solid", start_color="F1F8E9" if num % 2 == 0 else "FFFFFF")
-        row_data = [num, now.strftime("%d.%m.%Y %H:%M"),
-                    data.get("region", ""), data.get("product", ""),
-                    data.get("price", ""), data.get("volume", ""),
-                    data.get("contact", ""),
-                    f"@{user.username}" if user.username else "—", str(user.id)]
-        for col, val in enumerate(row_data, 1):
-            cell = ws.cell(row=num + 1, column=col, value=val)
-            cell.font, cell.border, cell.fill = font, thin, fill
-            if col in (1, 2, 5, 6):
-                cell.alignment = center
+            cell.alignment = Alignment(horizontal="left", vertical="center")
+    
+    # ===== 2. Сохраняем в лист региона =====
+    region_name = data.get("region", "Без региона")
+    safe_name = "".join(c for c in region_name if c not in r'\/:*?"<>|')[:31]
+    
+    if safe_name not in wb.sheetnames:
+        ws_region = wb.create_sheet(title=safe_name)
+        _style_header(ws_region)
+    else:
+        ws_region = wb[safe_name]
+    
+    row_num_region = ws_region.max_row + 1
+    fill_region = PatternFill("solid", start_color="F1F8E9" if (row_num_region - 1) % 2 == 0 else "FFFFFF")
+    
+    for col, val in enumerate(row_data, 1):
+        cell = ws_region.cell(row=row_num_region, column=col, value=val)
+        cell.font = font
+        cell.border = thin
+        cell.fill = fill_region
+        if col in (1, 2, 5, 6):
+            cell.alignment = center
+        else:
+            cell.alignment = Alignment(horizontal="left", vertical="center")
+    
+    # Сохраняем файл
     wb.save(EXCEL_FILE)
-    logger.info(f"Заявка сохранена — регион: {data.get('region')}")
+    logger.info(f"✅ Заявка сохранена в Excel — регион: {data.get('region')}, строка: {row_num - 1}")
     return True
 
 # ============================================================
 # КОМАНДЫ
 # ============================================================
 async def send_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет Excel-файл админу"""
     if str(update.effective_user.id) != ADMIN_CHAT_ID:
         await update.message.reply_text("⛔ У вас нет прав.")
         return
@@ -131,6 +167,7 @@ async def send_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Начало диалога - выбор региона"""
     context.user_data.clear()
     await update.message.reply_text(
         "👋 Добро пожаловать в бот *Дикоросы России!*\n\n"
@@ -144,6 +181,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return REGION
 
 async def get_region(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка региона"""
     text = update.message.text.strip()
     if text == "✏️ Другой регион":
         await update.message.reply_text("✏️ Напишите ваш регион:", reply_markup=ReplyKeyboardRemove())
@@ -159,6 +197,7 @@ async def get_region(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return PRODUCT
 
 async def get_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка продукта"""
     text = update.message.text.strip()
     if text == "✏️ Другое":
         await update.message.reply_text("✏️ Напишите название продукта:", reply_markup=ReplyKeyboardRemove())
@@ -174,6 +213,7 @@ async def get_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     return PRICE
 
 async def get_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка цены"""
     context.user_data["price"] = update.message.text.strip()
     await update.message.reply_text(
         "━━━━━━━━━━━━━━━\n"
@@ -184,6 +224,7 @@ async def get_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return VOLUME
 
 async def get_volume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка объёма"""
     context.user_data["volume"] = update.message.text.strip()
     await update.message.reply_text(
         "━━━━━━━━━━━━━━━\n"
@@ -194,6 +235,7 @@ async def get_volume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return CONTACT
 
 async def get_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка контакта и показ подтверждения"""
     context.user_data["contact"] = update.message.text.strip()
     d = context.user_data
     keyboard = InlineKeyboardMarkup([[
@@ -215,6 +257,7 @@ async def get_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     return CONFIRM
 
 async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Подтверждение заявки и сохранение"""
     query = update.callback_query
     await query.answer()
     
@@ -231,8 +274,10 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     user = update.effective_user
     d = context.user_data
     
+    # Сохраняем в Excel
     excel_ok = save_to_excel(d, user)
     
+    # Ответ пользователю
     await query.edit_message_text(
         f"✅ *Заявка принята! Спасибо!*\n\n"
         f"📍 {d['region']}\n"
@@ -245,6 +290,7 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         parse_mode="Markdown",
     )
     
+    # Уведомление админу
     admin_text = (
         f"📬 *Новая заявка!*\n"
         f"🕐 {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
@@ -255,7 +301,7 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         f"📞 Контакт: *{d['contact']}*\n\n"
         f"👤 {user.full_name} (@{user.username or '—'})\n"
         f"🆔 `{user.id}`\n\n"
-        f"{'📊 Сохранено в Excel ✅' if excel_ok else '⚠️ Ошибка Excel'}\n"
+        f"{'✅ Сохранено в Excel' if excel_ok else '❌ Ошибка сохранения Excel'}\n"
         f"_/excel — скачать таблицу_"
     )
     try:
@@ -266,6 +312,7 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Отмена диалога"""
     await update.message.reply_text("❌ Отменено. /start", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
@@ -273,10 +320,12 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 # ЗАПУСК
 # ============================================================
 def main():
+    """Запуск бота"""
     init_excel()
     app = Application.builder().token(BOT_TOKEN).build()
 
-    app.add_handler(ConversationHandler(
+    # ConversationHandler для заявок
+    conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
             REGION: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_region)],
@@ -287,11 +336,14 @@ def main():
             CONFIRM: [CallbackQueryHandler(confirm_order)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
-    ))
+    )
+    
+    app.add_handler(conv_handler)
     app.add_handler(CommandHandler("excel", send_excel))
 
-    print("✅ Бот запущен!")
-    app.run_polling()
+    print("✅ Бот успешно запущен!")
+    print(f"📁 Файл Excel: {EXCEL_FILE}")
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
