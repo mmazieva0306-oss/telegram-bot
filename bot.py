@@ -1,8 +1,6 @@
 import logging
 import os
-import asyncio
 from datetime import datetime
-from flask import Flask, request
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
@@ -16,7 +14,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 # ============================================================
 BOT_TOKEN = "8716526377:AAHkB-fUW7Mjnixr3JvJVl6tv-DOp70n1I0"
 ADMIN_CHAT_ID = "829964557"
-EXCEL_FILE = "/tmp/zayavki.xlsx"
+EXCEL_FILE = "zayavki.xlsx"  # Используем локальный файл, не /tmp
 
 REGION, PRODUCT, PRICE, VOLUME, CONTACT, CONFIRM = range(6)
 
@@ -24,7 +22,7 @@ logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=lo
 logger = logging.getLogger(__name__)
 
 # ============================================================
-# РЕГИОНЫ (АЛФАВИТНЫЙ ПОРЯДОК)
+# РЕГИОНЫ И ПРОДУКТЫ
 # ============================================================
 REGIONS = [
     ["Алтайский край", "Архангельская область"],
@@ -34,9 +32,6 @@ REGIONS = [
     ["Республика Марий Эл", "✏️ Другой регион"],
 ]
 
-# ============================================================
-# ПРОДУКТЫ
-# ============================================================
 PRODUCTS = [
     ["🌲 Шишка сосновая", "🍓 Морошка"],
     ["🫐 Черника", "🍊 Облепиха"],
@@ -46,7 +41,7 @@ PRODUCTS = [
 ]
 
 # ============================================================
-# EXCEL
+# EXCEL ФУНКЦИИ
 # ============================================================
 HEADER_COLS = ["№", "Дата", "Регион", "Продукт", "Цена (руб/кг)", "Объём (кг)", "Контакт", "Telegram", "ID"]
 COL_WIDTHS = [5, 12, 22, 22, 16, 12, 24, 20, 14]
@@ -303,58 +298,16 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 # ============================================================
-# FLASK ДЛЯ ВЕБХУКА
+# ЗАПУСК (POLLING - ПРОСТОЙ РЕЖИМ)
 # ============================================================
-flask_app = Flask(__name__)
-telegram_app = None
-
-@flask_app.route(f'/{BOT_TOKEN}', methods=['POST'])
-async def webhook():
-    try:
-        update = Update.de_json(request.get_json(force=True), telegram_app.bot)
-        await telegram_app.process_update(update)
-        return 'OK', 200
-    except Exception as e:
-        logger.error(f"Ошибка вебхука: {e}")
-        return 'Error', 500
-
-@flask_app.route('/')
-def health_check():
-    return 'Бот работает', 200
-
-async def setup_webhook():
-    """Асинхронная установка вебхука"""
-    render_url = os.environ.get('RENDER_EXTERNAL_URL')
-    if not render_url:
-        logger.warning("RENDER_EXTERNAL_URL не найден")
-        return False
-    
-    webhook_url = f"{render_url}/{BOT_TOKEN}"
-    
-    # Удаляем старый вебхук
-    await telegram_app.bot.delete_webhook(drop_pending_updates=True)
-    logger.info("✅ Старый вебхук удален")
-    
-    # Устанавливаем новый
-    result = await telegram_app.bot.set_webhook(url=webhook_url, drop_pending_updates=True)
-    if result:
-        logger.info(f"✅ Вебхук установлен: {webhook_url}")
-    else:
-        logger.error(f"❌ Ошибка установки вебхука")
-    return result
-
-# ============================================================
-# ЗАПУСК
-# ============================================================
-async def run_bot():
-    """Асинхронный запуск бота"""
-    global telegram_app
-    
-    print("🚀 Запуск бота...")
+def main():
+    print("🚀 Запуск бота в режиме polling...")
     init_excel()
     
-    telegram_app = Application.builder().token(BOT_TOKEN).build()
+    # Создаем приложение
+    app = Application.builder().token(BOT_TOKEN).build()
     
+    # Добавляем обработчики
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -368,34 +321,12 @@ async def run_bot():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
     
-    telegram_app.add_handler(conv_handler)
-    telegram_app.add_handler(CommandHandler("excel", send_excel))
+    app.add_handler(conv_handler)
+    app.add_handler(CommandHandler("excel", send_excel))
     
-    # Настраиваем вебхук
-    webhook_set = await setup_webhook()
-    
-    if webhook_set:
-        port = int(os.environ.get('PORT', 8080))
-        logger.info(f"🚀 Запуск Flask сервера на порту {port}")
-        
-        # Запускаем Flask в отдельном потоке
-        import threading
-        def run_flask():
-            flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-        
-        flask_thread = threading.Thread(target=run_flask)
-        flask_thread.start()
-        
-        # Держим бота активным
-        while True:
-            await asyncio.sleep(3600)  # Спим час
-    else:
-        logger.warning("Запуск в режиме polling")
-        await telegram_app.run_polling()
+    # Запускаем polling
+    print("✅ Бот запущен! Жду команды...")
+    app.run_polling(allowed_updates=["message", "callback_query"])
 
-# ============================================================
-# ТОЧКА ВХОДА
-# ============================================================
 if __name__ == "__main__":
-    # Запускаем асинхронную функцию
-    asyncio.run(run_bot())
+    main()
